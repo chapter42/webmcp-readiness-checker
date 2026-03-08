@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=320">
+  <title>WebMCP Readiness</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="header">
+    <h1 class="header__title">WebMCP Readiness</h1>
+    <time class="header__timestamp" id="scan-timestamp"></time>
+  </header>
+
+  <main id="main-content">
+    <!-- Empty / scanning state shown before results arrive -->
+    <div id="empty-state" class="empty-state">
+      <div class="spinner"></div>
+      <p>Scanning...</p>
+    </div>
+
+    <!-- Populated after SCAN_RESULTS message -->
+    <div id="results" class="results" hidden>
+
+      <!-- Score gauge -->
+      <section class="score-section" id="score-section"></section>
+
+      <!-- Category breakdown -->
+      <section class="categories" id="categories"></section>
+
+      <!-- Tools inventory -->
+      <section class="tools-section" id="tools-section">
+        <h2 class="section-heading">Discovered Tools</h2>
+        <div id="tools-list" class="tools-list"></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Action buttons -->
+  <footer class="actions">
+    <button class="btn" id="btn-overlay">Show on Page</button>
+    <button class="btn" id="btn-export">Export JSON</button>
+    <button class="btn" id="btn-export-md">Export Report</button>
+    <button class="btn btn--primary" id="btn-rescan">Re-scan</button>
+    <p class="disclaimer">Based on WebMCP spec March 2026</p>
+  </footer>
+
+  <script src="markdown-report.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

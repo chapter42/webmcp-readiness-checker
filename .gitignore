@@ -1,0 +1,6 @@
+.DS_Store
+*.zip
+
+# Audit outputs and working files
+webmcp-audit-*.md
+compass_artifact_*.md
