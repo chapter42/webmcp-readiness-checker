@@ -38,7 +38,9 @@ For each URL, use WebFetch to retrieve:
 
 4. **`{origin}/.well-known/webmcp`** — check if it exists and extract manifest content
 
-Make all 4 fetch requests for each URL.
+5. **`{origin}/.well-known/webmcp.json`** — check if it exists and extract manifest content (alternative proposed standard)
+
+Make all 5 fetch requests for each URL.
 
 ## Step 2: Score the page
 
@@ -78,7 +80,7 @@ Apply the following scoring rubric. Each category has a weight and individual si
 
 | Signal | How to detect | Points (out of 15) |
 |--------|--------------|---------------------|
-| `/.well-known/webmcp` manifest exists | Successful fetch with valid JSON | 5 |
+| `/.well-known/webmcp` or `/.well-known/webmcp.json` manifest exists | Successful fetch with valid JSON from either endpoint | 5 |
 | `/llms.txt` exists | Successful fetch with markdown content | 4 |
 | `robots.txt` allows AI crawlers | No blocks for GPTBot, Google-Extended, ClaudeBot | 4 |
 | Sitemap referenced in robots.txt | `Sitemap:` directive present | 2 |
@@ -132,6 +134,7 @@ Apply the following scoring rubric. Each category has a weight and individual si
 
 ## Discovery Files
 - {status icon} /.well-known/webmcp — {status detail}
+- {status icon} /.well-known/webmcp.json — {status detail}
 - {status icon} /llms.txt — {status detail}
 - {status icon} robots.txt — {AI crawler status detail}
 

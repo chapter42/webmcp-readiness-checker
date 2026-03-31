@@ -87,7 +87,7 @@ const FIX_SNIPPETS = {
 - [Cart](https://example.com/cart): Manage shopping cart`,
   },
   webmcp_manifest: {
-    desc: 'Create a /.well-known/webmcp manifest describing available tools.',
+    desc: 'Create a /.well-known/webmcp or /.well-known/webmcp.json manifest describing available tools.',
     code: `{
   "schema_version": "0.1",
   "name_for_model": "example_site",

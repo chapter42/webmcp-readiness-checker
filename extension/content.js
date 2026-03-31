@@ -348,19 +348,22 @@ function buildDiscoveryPlaceholder() {
 
 /**
  * Fill discovery category with data returned from the background script.
- * @param {{ robots: object, llms: object, webmcp: object }} discovery
+ * @param {{ robots: object, llms: object, webmcp: object, webmcpJson: object }} discovery
  * @returns {{ score: number, max: number, signals: Array }}
  */
 function fillDiscovery(discovery) {
   const signals = [];
   let score = 0;
 
-  // webmcp manifest (5 pts)
-  if (discovery.webmcp?.status === 200 && discovery.webmcp.content) {
+  // webmcp manifest (5 pts) — check .well-known/webmcp or .well-known/webmcp.json
+  const hasWebmcp = discovery.webmcp?.status === 200 && discovery.webmcp.content;
+  const hasWebmcpJson = discovery.webmcpJson?.status === 200 && discovery.webmcpJson.content;
+  if (hasWebmcp || hasWebmcpJson) {
+    const found = [hasWebmcp && '.well-known/webmcp', hasWebmcpJson && '.well-known/webmcp.json'].filter(Boolean).join(' and ');
     score += 5;
-    signals.push(signal('webmcp manifest', 'pass', '.well-known/webmcp found', 5));
+    signals.push(signal('webmcp manifest', 'pass', `${found} found`, 5));
   } else {
-    signals.push(signal('webmcp manifest', 'fail', 'No .well-known/webmcp', 0));
+    signals.push(signal('webmcp manifest', 'fail', 'No .well-known/webmcp or .well-known/webmcp.json', 0));
   }
 
   // llms.txt (4 pts)
@@ -675,7 +678,7 @@ function generateRecommendations(categories, forms, tools) {
   }
   const noManifest = disc.find((s) => s.name === 'webmcp manifest' && s.status === 'fail');
   if (noManifest) {
-    recs.push('Create a /.well-known/webmcp manifest listing your agent-accessible tools.');
+    recs.push('Create a /.well-known/webmcp or /.well-known/webmcp.json manifest listing your agent-accessible tools.');
   }
 
   // Missing tooldescription on tools

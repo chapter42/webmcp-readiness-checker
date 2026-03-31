@@ -5,7 +5,7 @@
  * Responsibilities:
  *  - Open the side panel when the extension icon is clicked.
  *  - Update the badge based on scan results from the content script.
- *  - Fetch discovery files (robots.txt, llms.txt, .well-known/webmcp).
+ *  - Fetch discovery files (robots.txt, llms.txt, .well-known/webmcp, .well-known/webmcp.json).
  *  - Inject a MAIN-world script to detect navigator.modelContext.
  *  - Route messages between the content script and the side panel.
  *  - Auto-scan on navigation and SPA history changes.
@@ -76,17 +76,18 @@ async function fetchFile(url) {
 }
 
 /**
- * Fetch all three discovery files for a given origin.
+ * Fetch all discovery files for a given origin.
  * @param {string} origin - e.g. "https://example.com"
- * @returns {Promise<{ robots: object, llms: object, webmcp: object }>}
+ * @returns {Promise<{ robots: object, llms: object, webmcp: object, webmcpJson: object }>}
  */
 async function fetchDiscoveryFiles(origin) {
-  const [robots, llms, webmcp] = await Promise.all([
+  const [robots, llms, webmcp, webmcpJson] = await Promise.all([
     fetchFile(`${origin}/robots.txt`),
     fetchFile(`${origin}/llms.txt`),
     fetchFile(`${origin}/.well-known/webmcp`),
+    fetchFile(`${origin}/.well-known/webmcp.json`),
   ]);
-  return { robots, llms, webmcp };
+  return { robots, llms, webmcp, webmcpJson };
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +191,7 @@ async function handleRequestScan(message) {
 
 /**
  * Handle FETCH_DISCOVERY requests.
- * Fetches robots.txt, llms.txt, and .well-known/webmcp for the given origin.
+ * Fetches robots.txt, llms.txt, .well-known/webmcp, and .well-known/webmcp.json for the given origin.
  * @param {object} message
  * @param {function} sendResponse
  */
