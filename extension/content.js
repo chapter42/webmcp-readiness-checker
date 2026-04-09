@@ -152,17 +152,29 @@ function scanWebMCPCore() {
     signals.push(signal('annotations', 'fail', 'No annotation attributes found', 0));
   }
 
-  // Check inline scripts for navigator.modelContext / registerTool / modelContextTesting
-  const inlineScripts = [...document.querySelectorAll('script:not([src])')];
-  const mcpKeywords = ['navigator.modelContext', 'registerTool', 'modelContextTesting'];
-  const foundKeywords = mcpKeywords.filter((kw) =>
-    inlineScripts.some((s) => s.textContent.includes(kw))
-  );
-  if (foundKeywords.length > 0) {
+  // modelContext API usage. Prefer runtime observation from inject.js
+  // (the MAIN-world monkey-patch actually watched registerTool calls),
+  // fall back to a keyword scan of inline scripts for pages we couldn't
+  // observe (e.g. extension installed after page load).
+  if (mainWorldResults?.methodDetected || (mainWorldResults?.tools || []).length > 0) {
     score += 5;
-    signals.push(signal('script references', 'pass', `Found: ${foundKeywords.join(', ')}`, 5));
+    const toolCount = (mainWorldResults.tools || []).length;
+    const evidence = toolCount > 0
+      ? `navigator.modelContext.registerTool observed (${toolCount} tool${toolCount === 1 ? '' : 's'})`
+      : 'navigator.modelContext.registerTool available';
+    signals.push(signal('script references', 'pass', evidence, 5));
   } else {
-    signals.push(signal('script references', 'fail', 'No modelContext / registerTool references in scripts', 0));
+    const inlineScripts = [...document.querySelectorAll('script:not([src])')];
+    const mcpKeywords = ['navigator.modelContext', 'registerTool', 'modelContextTesting'];
+    const foundKeywords = mcpKeywords.filter((kw) =>
+      inlineScripts.some((s) => s.textContent.includes(kw))
+    );
+    if (foundKeywords.length > 0) {
+      score += 5;
+      signals.push(signal('script references', 'pass', `Found: ${foundKeywords.join(', ')}`, 5));
+    } else {
+      signals.push(signal('script references', 'fail', 'No modelContext / registerTool references in scripts', 0));
+    }
   }
 
   return { score, max: 30, signals };
@@ -802,22 +814,39 @@ function requestDiscoveryData() {
 // ---------------------------------------------------------------------------
 
 /**
- * Request the background to inject the MAIN world script, then listen for
- * results dispatched by inject.js via a custom window event.
+ * Ask the MAIN-world inject.js for a fresh snapshot of navigator.modelContext
+ * state and its monkey-patched tool registry. inject.js is normally already
+ * running as a declared MAIN-world content script from document_start. If
+ * this is a pre-existing tab that loaded before the extension was installed,
+ * we also ask background to dynamically inject it as a fallback.
  */
 function requestMainWorldInjection() {
-  // Listen for results from the injected MAIN world script
+  // Listen for results dispatched by inject.js. Not `once` — inject.js
+  // re-dispatches whenever a tool is registered, so a late-mounting React
+  // component that calls registerTool() after our initial snapshot still
+  // updates the side panel.
   window.addEventListener('webmcp-checker-main-results', (event) => {
     if (event.detail) {
       mainWorldResults = event.detail;
       runScanAndReport();
     }
-  }, { once: true });
+  });
 
+  // Dispatch a request event — if the declared content script is running,
+  // inject.js will respond immediately.
   try {
-    chrome.runtime.sendMessage({ type: 'INJECT_MAIN_WORLD' }, (response) => {
+    window.dispatchEvent(new CustomEvent('webmcp-checker-main-request'));
+  } catch (_) { /* ignore */ }
+
+  // Fallback: ask background to executeScript inject.js into MAIN world
+  // for tabs where the declared content_script never got a chance to run
+  // (extension installed/reloaded after this page loaded). The double-load
+  // guard in inject.js makes this a no-op if the declared script is already
+  // running.
+  try {
+    chrome.runtime.sendMessage({ type: 'INJECT_MAIN_WORLD' }, () => {
       if (chrome.runtime.lastError) {
-        console.warn('[webMCP] Main world injection error:', chrome.runtime.lastError.message);
+        console.warn('[webMCP] Main world injection fallback:', chrome.runtime.lastError.message);
       }
     });
   } catch (err) {

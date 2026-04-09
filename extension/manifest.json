@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "WebMCP Readiness Checker",
   "description": "Audit any page for WebMCP and AI agent-readiness. Scores pages 0-100 across 6 categories.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "permissions": ["sidePanel", "activeTab", "storage", "scripting", "webNavigation"],
   "host_permissions": ["<all_urls>"],
   "side_panel": {
@@ -19,6 +19,12 @@
       "matches": ["<all_urls>"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ],
   "icons": {
