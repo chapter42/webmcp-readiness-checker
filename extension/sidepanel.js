@@ -13,6 +13,7 @@
 const $emptyState = document.getElementById('empty-state');
 const $results = document.getElementById('results');
 const $timestamp = document.getElementById('scan-timestamp');
+const $scanUrl = document.getElementById('scan-url');
 const $scoreSection = document.getElementById('score-section');
 const $categories = document.getElementById('categories');
 const $toolsList = document.getElementById('tools-list');
@@ -288,9 +289,11 @@ function renderSignal(signal) {
   const snippetKey = !passed ? fixSnippetKey(signal.key || signal.name || '') : null;
   const fixId = snippetKey ? `fix-${Math.random().toString(36).slice(2, 8)}` : null;
   const clickable = snippetKey ? 'signal--clickable' : '';
-  const onclick = fixId ? `onclick="toggleFix('${fixId}')"` : '';
+  // Inline `onclick=` violates the MV3 extension CSP — use data attributes
+  // and a delegated listener registered in init().
+  const dataAttr = fixId ? `data-fix-toggle="${fixId}"` : '';
 
-  let html = `<div class="signal ${clickable}" ${onclick}>
+  let html = `<div class="signal ${clickable}" ${dataAttr}>
     <span class="signal__icon ${cls}">${icon}</span>
     <span class="signal__name">${escapeHtml(signal.name || signal.key || '')}</span>
     <span class="signal__value" title="${escapeHtml(String(signal.rawValue ?? signal.value ?? ''))}">${escapeHtml(formatValue(signal.value ?? signal.rawValue))}</span>
@@ -302,7 +305,7 @@ function renderSignal(signal) {
       <p class="fix-card__desc">${escapeHtml(fix.desc)}</p>
       <div class="fix-card__code-wrap">
         <code class="fix-card__code">${escapeHtml(fix.code)}</code>
-        <button class="fix-card__copy" onclick="event.stopPropagation(); copyCode(this)">Copy</button>
+        <button class="fix-card__copy" data-copy-code>Copy</button>
       </div>
     </div>`;
   }
@@ -412,6 +415,25 @@ function renderAll() {
   const ts = scanData.timestamp ? new Date(scanData.timestamp) : new Date();
   $timestamp.textContent = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
+  // Scanned URL — makes it obvious which page the report reflects and gives
+  // a clickable link. Strip protocol for a cleaner label but keep href intact.
+  if (scanData.url) {
+    const href = scanData.url;
+    let label = href;
+    try {
+      const u = new URL(href);
+      label = u.host + (u.pathname === '/' ? '' : u.pathname) + u.search;
+    } catch { /* keep raw */ }
+    $scanUrl.href = href;
+    $scanUrl.textContent = label;
+    $scanUrl.title = href;
+    $scanUrl.hidden = false;
+  } else {
+    $scanUrl.hidden = true;
+    $scanUrl.textContent = '';
+    $scanUrl.removeAttribute('href');
+  }
+
   // Score gauge — handle both {total,max} object and plain number
   const totalScore = typeof scanData.score === 'object'
     ? (scanData.score.total ?? 0)
@@ -462,11 +484,12 @@ function renderAll() {
 // ---------------------------------------------------------------------------
 
 /**
- * Get the active tab ID.
+ * Get the currently active tab ID. Always queries fresh — do not cache,
+ * since the user may switch tabs between the initial scan and Re-scan,
+ * and the side panel should act on whatever tab is active *now*.
  * @returns {Promise<number|null>}
  */
 async function getActiveTabId() {
-  if (activeTabId) return activeTabId;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab) {
@@ -538,34 +561,28 @@ $btnExportMd.addEventListener('click', () => {
 $btnRescan.addEventListener('click', () => doScan());
 
 // ---------------------------------------------------------------------------
-// Global helpers (called from inline onclick in rendered HTML)
+// Delegated click handling for rendered category signals
 // ---------------------------------------------------------------------------
+// MV3 extension CSP forbids inline event handlers, so rendered markup uses
+// `data-fix-toggle` and `data-copy-code` attributes and this delegated
+// listener dispatches clicks to the right action.
 
-/**
- * Toggle a fix card open/closed.
- * @param {string} id DOM id of the fix card
- */
-window.toggleFix = function toggleFix(id) {
-  const el = document.getElementById(id);
-  if (el) el.classList.toggle('is-open');
-};
-
-/**
- * Copy the sibling code block text to clipboard and show feedback.
- * @param {HTMLButtonElement} btn The copy button element
- */
-window.copyCode = async function copyCode(btn) {
+async function copyCode(btn) {
   const codeEl = btn.parentElement?.querySelector('.fix-card__code');
   if (!codeEl) return;
 
-  try {
-    await navigator.clipboard.writeText(codeEl.textContent || '');
+  const done = () => {
     btn.textContent = 'Copied!';
     btn.classList.add('is-copied');
     setTimeout(() => {
       btn.textContent = 'Copy';
       btn.classList.remove('is-copied');
     }, 1500);
+  };
+
+  try {
+    await navigator.clipboard.writeText(codeEl.textContent || '');
+    done();
   } catch {
     // Clipboard API may fail in some contexts; fall back to execCommand
     const range = document.createRange();
@@ -575,14 +592,25 @@ window.copyCode = async function copyCode(btn) {
     sel?.addRange(range);
     document.execCommand('copy');
     sel?.removeAllRanges();
-    btn.textContent = 'Copied!';
-    btn.classList.add('is-copied');
-    setTimeout(() => {
-      btn.textContent = 'Copy';
-      btn.classList.remove('is-copied');
-    }, 1500);
+    done();
   }
-};
+}
+
+$categories.addEventListener('click', (event) => {
+  const copyBtn = event.target.closest('[data-copy-code]');
+  if (copyBtn) {
+    event.stopPropagation();
+    copyCode(copyBtn);
+    return;
+  }
+
+  const toggle = event.target.closest('[data-fix-toggle]');
+  if (toggle) {
+    const id = toggle.getAttribute('data-fix-toggle');
+    const el = id && document.getElementById(id);
+    if (el) el.classList.toggle('is-open');
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Utility
@@ -615,6 +643,8 @@ async function doScan() {
   $emptyState.hidden = false;
   $results.hidden = true;
   $timestamp.textContent = '';
+  $scanUrl.textContent = '';
+  $scanUrl.removeAttribute('href');
   overlayActive = false;
   $btnOverlay.classList.remove('btn--active');
   $btnOverlay.textContent = 'Show on Page';

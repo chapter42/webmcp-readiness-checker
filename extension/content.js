@@ -691,7 +691,10 @@ function generateRecommendations(categories, forms, tools) {
     recs.push('Serve the page over HTTPS for secure agent interactions.');
   }
 
-  return recs;
+  // Dedupe: multiple form instances (e.g. Gravity Forms rendering #gform_1
+  // twice in the live DOM) would otherwise produce identical recommendation
+  // strings. Preserve first-occurrence order.
+  return [...new Set(recs)];
 }
 
 // ---------------------------------------------------------------------------

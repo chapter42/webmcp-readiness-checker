@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.6
+
+- Fix: side panel now actually stretches when the user widens it. Root cause was `body { width: 320px }` + `<meta viewport content="width=320">` pinning the layout viewport regardless of the real panel width. Changed body to `min-width: 320px; width: 100%` and viewport to `width=device-width`.
+- Category summary row rewritten as flex with shrink priority: name (`flex: 1 1 auto`) absorbs all leftover space, progress bar (`flex: 0 3 140px`, `min 40 / max 140`) shrinks 3× faster than the name so long category labels like "Declarative Forms" are never truncated before the bar collapses. Score column pinned right with `flex: 0 0 auto`.
+
+## 0.1.5
+
+- Fix: Re-scan (and Show on Page) now always acts on the currently active tab. `getActiveTabId()` was caching the tab id from the first call, so switching tabs and hitting Re-scan re-scanned the original tab.
+- Fix: CSP violation from inline `onclick=` handlers in rendered category signals. MV3's default `script-src 'self'` rejected the inline handlers, breaking the fix-card toggle and Copy button. Replaced with `data-fix-toggle` / `data-copy-code` attributes and a single delegated click listener on `#categories`. Removed the `window.toggleFix` / `window.copyCode` globals.
+- Fix: duplicate recommendations when a page renders the same form twice (e.g. Gravity Forms injecting a second `#gform_1` via AJAX). `generateRecommendations()` now dedupes its output while preserving first-occurrence order.
+- UI: header now shows the scanned URL underneath the title as a clickable link (`host + path`, full URL in title/href). Makes it obvious which page the report reflects and avoids stale-URL confusion on the Export buttons.
+- UI: initial attempt at responsive category bars (refined further in 0.1.6).
+
 ## 0.1.4
 
 - New: Export Report button — generates a downloadable markdown audit report from scan results.
