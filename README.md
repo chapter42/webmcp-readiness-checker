@@ -11,7 +11,7 @@ WebMCP is a W3C Draft standard that lets websites expose structured, callable to
 | **WebMCP Core** | 30% | `navigator.modelContext` API, registered imperative tools, schema quality, annotations |
 | **Declarative Forms** | 25% | `toolname`, `tooldescription`, `toolparamdescription`, `toolautosubmit` attributes, form coverage ratio |
 | **Structured Data** | 20% | JSON-LD blocks, `potentialAction` (SearchAction, BuyAction), Product/Offer schema, Organization/WebSite schema |
-| **Discovery & Crawling** | 15% | `/.well-known/webmcp` manifest, `/llms.txt`, `robots.txt` AI crawler rules, sitemaps |
+| **Discovery & Crawling** | 15% | `/.well-known/webmcp` and `/.well-known/webmcp.json` manifest, `/llms.txt`, `robots.txt` AI crawler rules, sitemaps |
 | **Technical Foundation** | 10% | HTTPS, semantic HTML, server-side rendering, stable form IDs |
 | **Security & Consent** | Flags | Sensitive forms with autosubmit, missing consent patterns |
 
