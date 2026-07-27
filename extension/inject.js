@@ -5,12 +5,23 @@
  * Loaded two ways:
  *   1. Declared in manifest.json as a MAIN-world content script at
  *      document_start — the normal path, so we can monkey-patch
- *      navigator.modelContext.registerTool BEFORE any page script calls it.
+ *      registerTool BEFORE any page script calls it.
  *   2. Dynamically injected by background.js via chrome.scripting.executeScript
  *      as a fallback for tabs that were already open when the extension was
- *      installed/reloaded. In that case the page has usually already finished
- *      registering tools and we won't be able to enumerate them — but we'll
- *      still capture any future registrations.
+ *      installed/reloaded.
+ *
+ * API surface (WebMCP draft as of July 2026):
+ *   - `document.modelContext` is the current location. `navigator.modelContext`
+ *     was deprecated in Chromium 150 but still ships during the Chrome 149-156
+ *     origin trial, so we watch BOTH and record which one the page uses.
+ *   - `getTools()` enumerates registered tools directly — far more reliable
+ *     than our shadow registry, so we prefer it when available and fall back
+ *     to the registerTool monkey-patch otherwise.
+ *   - `toolchange` fires whenever the tool set changes. This is the correct
+ *     replacement for polling, and it is also the ONLY way we learn about
+ *     AbortSignal-driven unregistration — `unregisterTool()` was removed from
+ *     the spec in April 2026, so a wrapped unregisterTool no longer sees
+ *     teardown and the shadow registry would otherwise report stale tools.
  *
  * Communication with the ISOLATED-world content.js uses CustomEvents:
  *   - content.js dispatches `webmcp-checker-main-request` to ask for a snapshot
@@ -33,6 +44,18 @@
   /** @type {number} Auto-generated key for tools without a usable name. */
   var anonCounter = 0;
 
+  /** @type {boolean} Page exposes the current `document.modelContext` surface. */
+  var documentSurface = false;
+
+  /** @type {boolean} Page exposes the deprecated `navigator.modelContext` surface. */
+  var navigatorSurface = false;
+
+  /** @type {boolean} The live `getTools()` accessor is available on some surface. */
+  var getToolsAvailable = false;
+
+  /** @type {Array<object>|null} Most recent live `getTools()` result, if any. */
+  var liveTools = null;
+
   /**
    * Record a tool registration. Lenient: captures anything that looks
    * remotely like a tool def, using a fallback key if `name` is missing.
@@ -47,11 +70,18 @@
       registry.set(key, toolDef);
       // Reactive dispatch — content.js may have already snapshotted
       // before this tool was registered, so emit a fresh snapshot.
-      try {
-        window.dispatchEvent(new CustomEvent('webmcp-checker-main-results', {
-          detail: snapshot(),
-        }));
-      } catch (_) { /* ignore */ }
+      emit();
+    } catch (_) { /* ignore */ }
+  }
+
+  /**
+   * Dispatch the current snapshot to the ISOLATED-world content script.
+   */
+  function emit() {
+    try {
+      window.dispatchEvent(new CustomEvent('webmcp-checker-main-results', {
+        detail: snapshot(),
+      }));
     } catch (_) { /* ignore */ }
   }
 
@@ -171,21 +201,96 @@
   }
 
   /**
-   * Try to wrap both the production and testing modelContext objects if they
-   * exist. Safe to call repeatedly — `wrap` is idempotent via the marker flag.
+   * Subscribe to the `toolchange` event on a model context. This is how we
+   * learn about AbortSignal-driven unregistration — since `unregisterTool()`
+   * was removed from the spec, wrapping it is no longer sufficient and the
+   * shadow registry would keep reporting torn-down tools.
+   * @param {object} ctx
+   */
+  function watchToolChange(ctx) {
+    if (!ctx || typeof ctx.addEventListener !== 'function') return;
+    try {
+      if (ctx.__webmcpCheckerWatched) return;
+    } catch (_) { return; }
+
+    try {
+      ctx.addEventListener('toolchange', function () {
+        refreshLiveTools();
+        emit();
+      });
+      Object.defineProperty(ctx, '__webmcpCheckerWatched', {
+        value: true, enumerable: false, configurable: false,
+      });
+    } catch (_) { /* ignore */ }
+  }
+
+  /**
+   * Pull the authoritative tool list from `getTools()` when the browser
+   * provides it. Preferred over the shadow registry: it reflects the real
+   * current state including tools registered before we loaded and tools
+   * removed via AbortSignal.
+   */
+  function refreshLiveTools() {
+    var ctx = activeContext();
+    if (!ctx || typeof ctx.getTools !== 'function') return;
+
+    getToolsAvailable = true;
+    // getTools() returns a Promise in the current draft, but tolerate a
+    // synchronous array from older or polyfilled implementations. Wrapped in
+    // an async IIFE because the callers (tryWrap, the toolchange handler) are
+    // synchronous and must not wait on this.
+    (async function () {
+      try {
+        var result = await ctx.getTools();
+        if (Array.isArray(result)) {
+          liveTools = result;
+          emit();
+        }
+      } catch (_) { /* ignore */ }
+    })();
+  }
+
+  /**
+   * The model context object the page is actually using, preferring the
+   * current `document.modelContext` location over the deprecated one.
+   * @returns {object|null}
+   */
+  function activeContext() {
+    try { if (document.modelContext) return document.modelContext; } catch (_) { /* ignore */ }
+    try { if (navigator.modelContext) return navigator.modelContext; } catch (_) { /* ignore */ }
+    try { if (navigator.modelContextTesting) return navigator.modelContextTesting; } catch (_) { /* ignore */ }
+    return null;
+  }
+
+  /**
+   * Wrap and watch every model context surface the page exposes. Safe to call
+   * repeatedly — `wrap` and `watchToolChange` are idempotent via marker flags.
    */
   function tryWrap() {
     try {
-      if (navigator.modelContext) wrap(navigator.modelContext);
+      if (document.modelContext) {
+        documentSurface = true;
+        wrap(document.modelContext);
+        watchToolChange(document.modelContext);
+      }
+    } catch (_) { /* ignore */ }
+    try {
+      if (navigator.modelContext) {
+        navigatorSurface = true;
+        wrap(navigator.modelContext);
+        watchToolChange(navigator.modelContext);
+      }
     } catch (_) { /* ignore */ }
     try {
       if (navigator.modelContextTesting) wrap(navigator.modelContextTesting);
     } catch (_) { /* ignore */ }
+    refreshLiveTools();
   }
 
   tryWrap();
 
-  // Some implementations may lazily expose modelContext. Poll briefly.
+  // Some implementations expose modelContext lazily. Poll briefly as a
+  // backstop; once `toolchange` is wired up it carries subsequent updates.
   var attempts = 0;
   var pollId = setInterval(function () {
     tryWrap();
@@ -201,17 +306,26 @@
     var modelContextAvailable = false;
     var modelContextTestingAvailable = false;
     try {
-      modelContextAvailable = typeof navigator.modelContext !== 'undefined' && !!navigator.modelContext;
+      modelContextAvailable = !!(document.modelContext || navigator.modelContext);
     } catch (_) { /* ignore */ }
     try {
       modelContextTestingAvailable = typeof navigator.modelContextTesting !== 'undefined' && !!navigator.modelContextTesting;
     } catch (_) { /* ignore */ }
 
+    // Prefer the browser's own `getTools()` result — it is authoritative and
+    // already accounts for AbortSignal teardown. Fall back to the shadow
+    // registry built from intercepted registerTool calls.
+    var source = (liveTools && liveTools.length) ? liveTools : null;
+    var values = [];
+    try {
+      values = source ? source.slice() : Array.from(registry.values());
+    } catch (_) { /* ignore */ }
+
     var tools = [];
     try {
-      var values = Array.from(registry.values());
       for (var i = 0; i < values.length; i++) {
         var tool = values[i];
+        if (!tool || typeof tool !== 'object') continue;
         try {
           // Pull primitive fields first, then JSON-sanitize inputSchema /
           // annotations so we never try to structured-clone functions,
@@ -225,6 +339,9 @@
             inputSchema: null,
             annotations: null,
             source: 'imperative',
+            // Whether this tool declares a handler at all. `execute` is the
+            // current spec name; `handler` was the pre-2026 spelling.
+            hasExecute: typeof tool.execute === 'function' || typeof tool.handler === 'function',
           };
           try {
             var rawSchema = tool.inputSchema || tool.input_schema || tool.schema || null;
@@ -242,6 +359,14 @@
       modelContextAvailable: modelContextAvailable,
       modelContextTestingAvailable: modelContextTestingAvailable,
       methodDetected: methodDetected,
+      // Which API surface the page actually uses. `document.modelContext` is
+      // current; `navigator.modelContext` is deprecated as of Chromium 150.
+      documentSurface: documentSurface,
+      navigatorSurface: navigatorSurface,
+      // True when the browser exposes the live getTools() accessor, meaning
+      // the tool list below is authoritative rather than reconstructed.
+      getToolsAvailable: getToolsAvailable,
+      toolsAreLive: !!(liveTools && liveTools.length),
       tools: tools,
     };
   }
@@ -250,11 +375,8 @@
    * Respond to snapshot requests from the ISOLATED-world content script.
    */
   window.addEventListener('webmcp-checker-main-request', function () {
-    try {
-      window.dispatchEvent(new CustomEvent('webmcp-checker-main-results', {
-        detail: snapshot(),
-      }));
-    } catch (_) { /* ignore */ }
+    tryWrap();
+    emit();
   });
 
   // Expose a debug handle so users can inspect state from devtools with
@@ -265,6 +387,7 @@
         snapshot: snapshot,
         registry: registry,
         tryWrap: tryWrap,
+        refreshLiveTools: refreshLiveTools,
       },
       enumerable: false,
       configurable: false,
@@ -274,9 +397,5 @@
   // Also broadcast once on load so content scripts that were waiting for us
   // (e.g. the content script raced us to initialization) receive data
   // without having to re-request.
-  try {
-    window.dispatchEvent(new CustomEvent('webmcp-checker-main-results', {
-      detail: snapshot(),
-    }));
-  } catch (_) { /* ignore */ }
+  emit();
 })();

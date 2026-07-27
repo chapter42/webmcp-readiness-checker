@@ -124,11 +124,18 @@ User-agent: ClaudeBot
 Allow: /`,
   },
   model_context_api: {
-    desc: 'Register tools via the navigator.modelContext imperative API.',
-    code: `if (navigator.modelContext) {
-  navigator.modelContext.addTool({
-    name: "search",
-    description: "Search products",
+    desc: 'Register tools via the imperative API on document.modelContext. '
+      + 'navigator.modelContext is deprecated as of Chrome 150 — feature-detect both '
+      + 'during the origin trial. Unregister with an AbortSignal; unregisterTool() '
+      + 'was removed from the spec.',
+    code: `const modelContext = document.modelContext ?? navigator.modelContext;
+
+if (modelContext && "registerTool" in modelContext) {
+  const controller = new AbortController();
+
+  modelContext.registerTool({
+    name: "search_products",
+    description: "Search the product catalog by keyword",
     inputSchema: {
       type: "object",
       properties: {
@@ -136,12 +143,47 @@ Allow: /`,
       },
       required: ["query"]
     },
-    async handler({ query }) {
-      const res = await fetch(\`/api/search?q=\${query}\`);
+    async execute({ query }) {
+      const res = await fetch(\`/api/search?q=\${encodeURIComponent(query)}\`);
       return res.json();
-    }
-  });
+    },
+    annotations: { readOnlyHint: true }
+  }, { signal: controller.signal });
+
+  // Unregister on route change / unmount:
+  // controller.abort();
 }`,
+  },
+  agent_submit_handling: {
+    desc: 'Handle agent-invoked form submissions so the agent gets a result back '
+      + 'instead of a page navigation. The SubmitEvent exposes agentInvoked and respondWith().',
+    code: `document.querySelector("form").addEventListener("submit", (event) => {
+  event.preventDefault();
+
+  const resultPromise = performSearch(new FormData(event.target));
+
+  // Return the result straight to the agent, no navigation needed.
+  if (event.agentInvoked) {
+    event.respondWith(resultPromise);
+  }
+});`,
+  },
+  tool_feedback: {
+    desc: 'Give users visible feedback while an agent drives a form, using the '
+      + 'WebMCP lifecycle events and CSS pseudo-classes.',
+    code: `<style>
+  form:tool-form-active { outline: 2px dashed #3b82f6; }
+  button:tool-submit-active { outline: 2px dashed #ef4444; }
+</style>
+
+<script>
+  window.addEventListener("toolactivated", ({ toolName }) => {
+    console.log(\`Agent activated: \${toolName}\`);
+  });
+  window.addEventListener("toolcanceled", ({ toolName }) => {
+    console.log(\`Agent cancelled: \${toolName}\`);
+  });
+<\/script>`,
   },
   semantic_html: {
     desc: 'Use semantic HTML elements so agents can understand page structure.',
@@ -245,7 +287,9 @@ function fixSnippetKey(signalKey) {
   if (key.includes('llms')) return 'llms_txt';
   if (key.includes('webmcp') || key.includes('manifest')) return 'webmcp_manifest';
   if (key.includes('robots')) return 'robots_txt';
-  if (key.includes('model_context') || key.includes('imperative')) return 'model_context_api';
+  if (key.includes('agent_submit') || key.includes('respondwith') || key.includes('agentinvoked')) return 'agent_submit_handling';
+  if (key.includes('tool_feedback') || key.includes('lifecycle') || key.includes('toolactivated')) return 'tool_feedback';
+  if (key.includes('model_context') || key.includes('imperative') || key.includes('registertool')) return 'model_context_api';
   if (key.includes('semantic') || key.includes('landmark')) return 'semantic_html';
   if (key.includes('aria')) return 'aria_labels';
   if (key.includes('meta_desc') || key.includes('description')) return 'meta_description';
@@ -259,7 +303,10 @@ function fixSnippetKey(signalKey) {
  */
 function statusIcon(status) {
   if (status === true || status === 'pass') return { icon: '\u2713', cls: 'signal__icon--pass' };
-  if (status === 'warn' || status === 'partial') return { icon: '\u25CB', cls: 'signal__icon--warn' };
+  // content.js emits 'warning'; accept the shorter spellings too.
+  if (status === 'warn' || status === 'warning' || status === 'partial') {
+    return { icon: '\u25CB', cls: 'signal__icon--warn' };
+  }
   return { icon: '\u2717', cls: 'signal__icon--fail' };
 }
 
@@ -284,7 +331,7 @@ function formatValue(value) {
  */
 function renderSignal(signal) {
   const passed = signal.pass === true || signal.status === 'pass' || signal.status === true;
-  const warn = signal.status === 'warn' || signal.status === 'partial';
+  const warn = signal.status === 'warn' || signal.status === 'warning' || signal.status === 'partial';
   const { icon, cls } = statusIcon(passed ? true : (warn ? 'warn' : false));
   const snippetKey = !passed ? fixSnippetKey(signal.key || signal.name || '') : null;
   const fixId = snippetKey ? `fix-${Math.random().toString(36).slice(2, 8)}` : null;
@@ -618,13 +665,26 @@ $categories.addEventListener('click', (event) => {
 
 /**
  * Escape HTML special characters to prevent XSS.
- * @param {string} str
+ *
+ * Every value passed through here originates from the scanned page (tool
+ * names, descriptions, signal values) and is therefore attacker-controlled,
+ * while the side panel is a privileged extension context with access to the
+ * chrome.* APIs. Some call sites interpolate into attribute values
+ * (`title="..."`), so quotes MUST be escaped as well — the previous
+ * `div.textContent = str; return div.innerHTML` trick escapes only & < >
+ * and left `"` intact, allowing a crafted tool description to break out of
+ * the attribute and inject an event handler.
+ *
+ * @param {*} str
  * @returns {string}
  */
 function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ---------------------------------------------------------------------------

@@ -118,62 +118,93 @@ function scanWebMCPCore() {
   const signals = [];
   let score = 0;
 
-  // Check for form[toolname]
+  const imperativeTools = mainWorldResults?.tools || [];
+  const hasImperative = !!mainWorldResults?.methodDetected || imperativeTools.length > 0;
+
+  // ── Tools exposed at all (12 pts) ──────────────────────────────────────
+  // Either declarative (form[toolname]) or imperative (registerTool observed).
   const toolForms = document.querySelectorAll('form[toolname]');
-  if (toolForms.length > 0) {
-    score += 15;
-    signals.push(signal('form[toolname]', 'pass', `${toolForms.length} form(s) with toolname`, 15));
+  if (toolForms.length > 0 || hasImperative) {
+    score += 12;
+    const parts = [];
+    if (toolForms.length > 0) parts.push(`${toolForms.length} declarative form(s)`);
+    if (imperativeTools.length > 0) parts.push(`${imperativeTools.length} imperative tool(s)`);
+    else if (hasImperative) parts.push('registerTool available');
+    signals.push(signal('tools exposed', 'pass', parts.join(', '), 12));
   } else {
-    signals.push(signal('form[toolname]', 'fail', 'No forms with toolname attribute', 0));
+    signals.push(signal('tools exposed', 'fail', 'No declarative or imperative tools found', 0));
   }
 
-  // Check for tooldescription on those forms
+  // ── Tool descriptions (8 pts) ──────────────────────────────────────────
   const describedForms = document.querySelectorAll('form[toolname][tooldescription]');
-  if (describedForms.length > 0) {
-    score += 10;
-    signals.push(signal('tooldescription', 'pass', `${describedForms.length} form(s) with tooldescription`, 10));
-  } else if (toolForms.length > 0) {
-    signals.push(signal('tooldescription', 'warning', 'Tool forms found but missing tooldescription', 0));
+  const describedImperative = imperativeTools.filter((t) => t.description).length;
+  if (describedForms.length > 0 || describedImperative > 0) {
+    score += 8;
+    const parts = [];
+    if (describedForms.length > 0) parts.push(`${describedForms.length} form(s)`);
+    if (describedImperative > 0) parts.push(`${describedImperative} JS tool(s)`);
+    signals.push(signal('tool descriptions', 'pass', parts.join(', '), 8));
+  } else if (toolForms.length > 0 || imperativeTools.length > 0) {
+    signals.push(signal('tool descriptions', 'warning', 'Tools found but none carry a description', 0));
   } else {
-    signals.push(signal('tooldescription', 'fail', 'No tooldescription attributes found', 0));
+    signals.push(signal('tool descriptions', 'fail', 'No tool descriptions found', 0));
   }
 
-  // Check for annotation-related attributes
-  const annotationAttrs = [
-    'toolannotation', 'toolreadonly', 'tooldestructive', 'toolidempotent', 'toolopenworldhint'
-  ];
-  const annotationFound = annotationAttrs.some(
-    (attr) => document.querySelector(`[${attr}]`) !== null
+  // ── Annotations (5 pts) ────────────────────────────────────────────────
+  // Annotations are an imperative-API concept only: `annotations: { readOnlyHint }`
+  // on the tool definition. The declarative API defines no annotation
+  // attributes — earlier versions of this extension scored attributes like
+  // `toolreadonly` / `tooldestructive` that have never existed in any draft.
+  const annotated = imperativeTools.filter(
+    (t) => t.annotations && Object.keys(t.annotations).length > 0
   );
-  if (annotationFound) {
+  if (annotated.length > 0) {
     score += 5;
-    signals.push(signal('annotations', 'pass', 'Annotation attributes found on elements', 5));
+    const hints = [...new Set(annotated.flatMap((t) => Object.keys(t.annotations)))];
+    signals.push(signal('annotations', 'pass',
+      `${annotated.length} tool(s): ${hints.join(', ')}`, 5));
+  } else if (imperativeTools.length > 0) {
+    signals.push(signal('annotations', 'warning',
+      'Imperative tools present but none declare annotations (e.g. readOnlyHint)', 0));
   } else {
-    signals.push(signal('annotations', 'fail', 'No annotation attributes found', 0));
+    signals.push(signal('annotations', 'fail', 'No tool annotations found', 0));
   }
 
-  // modelContext API usage. Prefer runtime observation from inject.js
-  // (the MAIN-world monkey-patch actually watched registerTool calls),
-  // fall back to a keyword scan of inline scripts for pages we couldn't
-  // observe (e.g. extension installed after page load).
-  if (mainWorldResults?.methodDetected || (mainWorldResults?.tools || []).length > 0) {
+  // ── API surface / modernity (5 pts) ────────────────────────────────────
+  // `document.modelContext` is the current location; `navigator.modelContext`
+  // was deprecated in Chromium 150. Award full points for the current surface,
+  // partial credit for the deprecated one, and fall back to a static keyword
+  // scan for pages we could not observe at runtime.
+  if (mainWorldResults?.documentSurface) {
     score += 5;
-    const toolCount = (mainWorldResults.tools || []).length;
-    const evidence = toolCount > 0
-      ? `navigator.modelContext.registerTool observed (${toolCount} tool${toolCount === 1 ? '' : 's'})`
-      : 'navigator.modelContext.registerTool available';
-    signals.push(signal('script references', 'pass', evidence, 5));
+    signals.push(signal('modelContext API', 'pass',
+      `document.modelContext in use${mainWorldResults.toolsAreLive ? ' (getTools verified)' : ''}`, 5));
+  } else if (mainWorldResults?.navigatorSurface || hasImperative) {
+    score += 3;
+    signals.push(signal('modelContext API', 'warning',
+      'Only navigator.modelContext observed — deprecated since Chromium 150, migrate to document.modelContext', 3));
   } else {
     const inlineScripts = [...document.querySelectorAll('script:not([src])')];
-    const mcpKeywords = ['navigator.modelContext', 'registerTool', 'modelContextTesting'];
-    const foundKeywords = mcpKeywords.filter((kw) =>
-      inlineScripts.some((s) => s.textContent.includes(kw))
-    );
-    if (foundKeywords.length > 0) {
+    const modern = ['document.modelContext'];
+    const legacy = ['navigator.modelContext', 'modelContextTesting'];
+    const generic = ['registerTool'];
+    const text = inlineScripts.map((s) => s.textContent || '');
+    const found = (list) => list.filter((kw) => text.some((t) => t.includes(kw)));
+
+    const foundModern = found(modern);
+    const foundLegacy = found(legacy);
+    const foundGeneric = found(generic);
+
+    if (foundModern.length > 0) {
       score += 5;
-      signals.push(signal('script references', 'pass', `Found: ${foundKeywords.join(', ')}`, 5));
+      signals.push(signal('modelContext API', 'pass', `Found in scripts: ${foundModern.join(', ')}`, 5));
+    } else if (foundLegacy.length > 0 || foundGeneric.length > 0) {
+      score += 3;
+      signals.push(signal('modelContext API', 'warning',
+        `Found: ${[...foundLegacy, ...foundGeneric].join(', ')} — deprecated surface, migrate to document.modelContext`, 3));
     } else {
-      signals.push(signal('script references', 'fail', 'No modelContext / registerTool references in scripts', 0));
+      signals.push(signal('modelContext API', 'fail',
+        'No modelContext / registerTool references found', 0));
     }
   }
 
@@ -197,26 +228,26 @@ function scanDeclarativeForms() {
   const paramDescInputs = document.querySelectorAll('[toolparamdescription]');
   const autosubmitForms = document.querySelectorAll('form[toolautosubmit]');
 
-  // forms with toolname (8 pts)
+  // forms with toolname (7 pts)
   if (toolNameForms.length > 0) {
-    score += 8;
-    signals.push(signal('toolname count', 'pass', `${toolNameForms.length} form(s)`, 8));
+    score += 7;
+    signals.push(signal('toolname count', 'pass', `${toolNameForms.length} form(s)`, 7));
   } else {
     signals.push(signal('toolname count', 'fail', 'No forms with toolname', 0));
   }
 
-  // forms with tooldescription (7 pts)
+  // forms with tooldescription (6 pts)
   if (toolDescForms.length > 0) {
-    score += 7;
-    signals.push(signal('tooldescription count', 'pass', `${toolDescForms.length} form(s)`, 7));
+    score += 6;
+    signals.push(signal('tooldescription count', 'pass', `${toolDescForms.length} form(s)`, 6));
   } else {
     signals.push(signal('tooldescription count', 'fail', 'No forms with tooldescription', 0));
   }
 
-  // inputs with toolparamdescription (5 pts)
+  // inputs with toolparamdescription (4 pts)
   if (paramDescInputs.length > 0) {
-    score += 5;
-    signals.push(signal('toolparamdescription', 'pass', `${paramDescInputs.length} input(s)`, 5));
+    score += 4;
+    signals.push(signal('toolparamdescription', 'pass', `${paramDescInputs.length} input(s)`, 4));
   } else {
     signals.push(signal('toolparamdescription', 'fail', 'No inputs with toolparamdescription', 0));
   }
@@ -251,7 +282,62 @@ function scanDeclarativeForms() {
     signals.push(signal('coverage ratio', 'warning', 'No forms on page', 0));
   }
 
+  // Agent submission handling (3 pts). The declarative API gives an
+  // agent-invoked submit three integration points, all added to the draft in
+  // 2026: SubmitEvent.agentInvoked / respondWith() to return a result instead
+  // of navigating, the toolactivated / toolcanceled lifecycle events, and the
+  // :tool-form-active / :tool-submit-active pseudo-classes for user feedback.
+  const agentHandling = detectAgentSubmitHandling();
+  if (agentHandling.found.length > 0) {
+    score += 3;
+    signals.push(signal('agent submit handling', 'pass', agentHandling.found.join(', '), 3));
+  } else {
+    signals.push(signal('agent submit handling', 'fail',
+      'No respondWith / lifecycle events / :tool-form-active found'
+      + (agentHandling.inlineOnly ? ' (inline scripts only — external bundles not scanned)' : ''),
+      0));
+  }
+
   return { score, max: 25, signals };
+}
+
+/**
+ * Look for the current spec's agent-submission integration points. Only
+ * inline scripts and readable stylesheets can be inspected — code inside
+ * external bundles is invisible to a DOM scan, so a negative result here is
+ * "not detected" rather than "not implemented".
+ * @returns {{ found: string[], inlineOnly: boolean }}
+ */
+function detectAgentSubmitHandling() {
+  const found = [];
+
+  const scriptText = [...document.querySelectorAll('script:not([src])')]
+    .map((s) => s.textContent || '')
+    .join('\n');
+
+  if (/\bagentInvoked\b/.test(scriptText) || /\brespondWith\s*\(/.test(scriptText)) {
+    found.push('respondWith / agentInvoked');
+  }
+  if (/['"`]tool(activated|canceled|cancel)['"`]/.test(scriptText)) {
+    found.push('tool lifecycle events');
+  }
+
+  // Same-origin stylesheets expose cssRules; cross-origin ones throw on
+  // access, so treat those as simply unreadable.
+  let cssText = '';
+  try {
+    for (const sheet of document.styleSheets) {
+      try {
+        for (const rule of sheet.cssRules) cssText += rule.cssText;
+      } catch { /* cross-origin stylesheet — not readable */ }
+    }
+  } catch { /* ignore */ }
+
+  if (/:tool-form-active|:tool-submit-active/.test(cssText + scriptText)) {
+    found.push(':tool-form-active styling');
+  }
+
+  return { found, inlineOnly: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -426,12 +512,15 @@ function scanTechnicalFoundation() {
   const signals = [];
   let score = 0;
 
-  // HTTPS (3 pts)
-  if (location.protocol === 'https:') {
+  // HTTPS / secure context (3 pts). WebMCP is not merely "better" over HTTPS —
+  // it is gated on a secure context, so without one no tool can ever be
+  // registered regardless of how well the page is annotated.
+  if (window.isSecureContext) {
     score += 3;
-    signals.push(signal('HTTPS', 'pass', 'Page served over HTTPS', 3));
+    signals.push(signal('HTTPS', 'pass', 'Secure context — WebMCP can run', 3));
   } else {
-    signals.push(signal('HTTPS', 'fail', `Protocol: ${location.protocol}`, 0));
+    signals.push(signal('HTTPS', 'fail',
+      `Not a secure context (${location.protocol}) — WebMCP is unavailable entirely`, 0));
   }
 
   // Semantic HTML (3 pts) -- check heading hierarchy, label[for], ARIA landmarks
@@ -698,9 +787,33 @@ function generateRecommendations(categories, forms, tools) {
     );
   }
 
-  // HTTPS
-  if (location.protocol !== 'https:') {
-    recs.push('Serve the page over HTTPS for secure agent interactions.');
+  // Secure context — a hard prerequisite, so surface it first.
+  if (!window.isSecureContext) {
+    recs.unshift(
+      'Serve this page over HTTPS. WebMCP requires a secure context; without one '
+      + 'no tools can be registered at all, whatever else the page does.'
+    );
+  }
+
+  // Deprecated API surface — actionable migration step.
+  if (mainWorldResults?.navigatorSurface && !mainWorldResults?.documentSurface) {
+    recs.push(
+      'Migrate tool registration from navigator.modelContext to document.modelContext '
+      + '(deprecated in Chromium 150). Feature-detect both during the origin trial: '
+      + 'const modelContext = document.modelContext ?? navigator.modelContext;'
+    );
+  }
+
+  // Imperative tools without annotations.
+  const unannotated = (mainWorldResults?.tools || []).filter(
+    (t) => !t.annotations || Object.keys(t.annotations).length === 0
+  );
+  if (unannotated.length > 0) {
+    recs.push(
+      `Add annotations to ${unannotated.length} imperative tool(s) — at minimum `
+      + 'annotations: { readOnlyHint: true } on tools that do not modify state, '
+      + 'so agents know which calls are safe to make.'
+    );
   }
 
   // Dedupe: multiple form instances (e.g. Gravity Forms rendering #gform_1
@@ -718,6 +831,14 @@ let mainWorldResults = null;
 
 /** @type {object|null} Cached discovery results from background. */
 let discoveryResults = null;
+
+/**
+ * @type {boolean} Whether the MAIN-world results listener is already attached.
+ * Every scan calls requestMainWorldInjection(); without this guard each
+ * re-scan stacked another listener, so a single tool registration ended up
+ * firing one full re-scan per historical scan.
+ */
+let mainWorldListenerAttached = false;
 
 
 /**
@@ -773,12 +894,13 @@ function scanPage() {
 /**
  * Run a full scan and send results to the background service worker.
  */
-function runScanAndReport() {
+async function runScanAndReport() {
   const data = scanPage();
   try {
-    chrome.runtime.sendMessage({ type: 'SCAN_RESULTS', data });
+    await chrome.runtime.sendMessage({ type: 'SCAN_RESULTS', data });
   } catch (err) {
-    console.error('[webMCP] Failed to send scan results:', err);
+    // The service worker may be asleep or the panel closed — not fatal.
+    console.warn('[webMCP] Failed to send scan results:', err);
   }
 }
 
@@ -789,21 +911,16 @@ function runScanAndReport() {
 /**
  * Request discovery files from the background script and re-scan once received.
  */
-function requestDiscoveryData() {
+async function requestDiscoveryData() {
   try {
-    chrome.runtime.sendMessage(
-      { type: 'FETCH_DISCOVERY', origin: location.origin },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          console.warn('[webMCP] Discovery fetch error:', chrome.runtime.lastError.message);
-          return;
-        }
-        if (response?.data) {
-          discoveryResults = response.data;
-          runScanAndReport();
-        }
-      }
-    );
+    const response = await chrome.runtime.sendMessage({
+      type: 'FETCH_DISCOVERY',
+      origin: location.origin,
+    });
+    if (response?.data) {
+      discoveryResults = response.data;
+      await runScanAndReport();
+    }
   } catch (err) {
     console.warn('[webMCP] Failed to request discovery data:', err);
   }
@@ -814,29 +931,33 @@ function requestDiscoveryData() {
 // ---------------------------------------------------------------------------
 
 /**
- * Ask the MAIN-world inject.js for a fresh snapshot of navigator.modelContext
- * state and its monkey-patched tool registry. inject.js is normally already
+ * Ask the MAIN-world inject.js for a fresh snapshot of the page's model
+ * context state and its tool registry. inject.js is normally already
  * running as a declared MAIN-world content script from document_start. If
  * this is a pre-existing tab that loaded before the extension was installed,
  * we also ask background to dynamically inject it as a fallback.
  */
-function requestMainWorldInjection() {
+async function requestMainWorldInjection() {
   // Listen for results dispatched by inject.js. Not `once` — inject.js
-  // re-dispatches whenever a tool is registered, so a late-mounting React
-  // component that calls registerTool() after our initial snapshot still
-  // updates the side panel.
-  window.addEventListener('webmcp-checker-main-results', (event) => {
-    if (event.detail) {
-      mainWorldResults = event.detail;
-      runScanAndReport();
-    }
-  });
+  // re-dispatches whenever a tool is registered or the browser fires
+  // `toolchange`, so a late-mounting React component that calls
+  // registerTool() after our initial snapshot still updates the side panel.
+  // Registered only once: repeated scans must not stack duplicate listeners.
+  if (!mainWorldListenerAttached) {
+    mainWorldListenerAttached = true;
+    window.addEventListener('webmcp-checker-main-results', (event) => {
+      if (event.detail) {
+        mainWorldResults = event.detail;
+        runScanAndReport();
+      }
+    });
+  }
 
   // Dispatch a request event — if the declared content script is running,
   // inject.js will respond immediately.
   try {
     window.dispatchEvent(new CustomEvent('webmcp-checker-main-request'));
-  } catch (_) { /* ignore */ }
+  } catch { /* ignore */ }
 
   // Fallback: ask background to executeScript inject.js into MAIN world
   // for tabs where the declared content_script never got a chance to run
@@ -844,13 +965,9 @@ function requestMainWorldInjection() {
   // guard in inject.js makes this a no-op if the declared script is already
   // running.
   try {
-    chrome.runtime.sendMessage({ type: 'INJECT_MAIN_WORLD' }, () => {
-      if (chrome.runtime.lastError) {
-        console.warn('[webMCP] Main world injection fallback:', chrome.runtime.lastError.message);
-      }
-    });
+    await chrome.runtime.sendMessage({ type: 'INJECT_MAIN_WORLD' });
   } catch (err) {
-    console.warn('[webMCP] Failed to request main world injection:', err);
+    console.warn('[webMCP] Main world injection fallback failed:', err);
   }
 }
 
@@ -862,9 +979,29 @@ function requestMainWorldInjection() {
 let overlayActive = false;
 
 /**
- * Toggle the visual overlay that highlights forms and JSON-LD on the page.
+ * Apply a callback to elements in small batches, yielding to the browser
+ * between each batch so a form-heavy page never freezes while the overlay
+ * is drawn.
+ * @param {Array<Element>} elements
+ * @param {(el: Element) => void} fn
+ * @param {number} batchSize
  */
-function toggleOverlay() {
+async function batchApply(elements, fn, batchSize = 20) {
+  for (let i = 0; i < elements.length; i += batchSize) {
+    const slice = elements.slice(i, i + batchSize);
+    await new Promise((resolve) => requestAnimationFrame(() => {
+      slice.forEach(fn);
+      resolve();
+    }));
+    if (globalThis.scheduler?.yield) await scheduler.yield();
+  }
+}
+
+/**
+ * Toggle the visual overlay that highlights forms and JSON-LD on the page.
+ * @returns {Promise<void>}
+ */
+async function toggleOverlay() {
   if (overlayActive) {
     // Remove all overlay elements
     const overlayEls = document.querySelectorAll(`.${OVERLAY_CLASS}`);
@@ -884,8 +1021,8 @@ function toggleOverlay() {
   // Activate overlay
   overlayActive = true;
 
-  const allForms = document.querySelectorAll('form');
-  for (const form of allForms) {
+  const allForms = [...document.querySelectorAll('form')];
+  await batchApply(allForms, (form) => {
     const hasToolname = form.hasAttribute('toolname');
 
     // Style the form
@@ -922,11 +1059,11 @@ function toggleOverlay() {
       form.style.position = 'relative';
     }
     form.appendChild(label);
-  }
+  });
 
   // Highlight JSON-LD script tags' parent elements
-  const ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
-  for (const script of ldScripts) {
+  const ldScripts = [...document.querySelectorAll('script[type="application/ld+json"]')];
+  await batchApply(ldScripts, (script) => {
     const parent = script.parentElement;
     if (parent && parent !== document.head) {
       const highlight = document.createElement('div');
@@ -951,7 +1088,7 @@ function toggleOverlay() {
       }
       parent.appendChild(highlight);
     }
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -973,7 +1110,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === 'TOGGLE_OVERLAY') {
-    toggleOverlay();
+    // toggleOverlay() flips `overlayActive` synchronously before its first
+    // await, so the response below already reflects the new state while the
+    // batched DOM work continues in the background.
+    toggleOverlay().catch((err) => console.error('[webMCP] Overlay failed:', err));
     sendResponse({ overlayActive });
     return false;
   }

@@ -1,5 +1,107 @@
 # Changelog
 
+## 0.2.0
+
+Compliance pass against the Chrome Manifest V3 guidance and a re-check of the
+rubric against the WebMCP draft as of July 2026. The spec moved underneath this
+extension since 0.1.7 and several signals were scoring things that no longer
+exist — or never did.
+
+### Security
+
+- **Fixed an XSS hole in the side panel.** `escapeHtml()` used the
+  `div.textContent = str; return div.innerHTML` trick, which escapes `&`, `<`
+  and `>` but leaves quotes intact. Two call sites interpolate into attribute
+  values (`title="${escapeHtml(...)}"`), so a page serving a tool description
+  like `x" onmouseover="…` could break out of the attribute and run script
+  **inside the extension's privileged side panel**, which has `chrome.*` access.
+  All values rendered there originate from the scanned page. Now escapes
+  `& < > " '` explicitly.
+
+### Spec drift (WebMCP draft, July 2026)
+
+- **`document.modelContext` is now detected.** `navigator.modelContext` was
+  deprecated in Chromium 150; the extension only ever looked at the deprecated
+  location, so a site correctly using the current API scored zero on WebMCP
+  Core. `inject.js` now watches both surfaces and reports which one is in use.
+- **`getTools()` is now used when available.** 0.1.7's changelog claimed the API
+  "has no way to enumerate previously-registered tools" — that stopped being
+  true. When the browser exposes `getTools()` its result is authoritative and
+  takes precedence over the shadow registry, which means tools registered
+  before injection are no longer invisible.
+- **`toolchange` is now the update signal.** `unregisterTool()` was removed from
+  the draft in April 2026 in favour of `AbortSignal`, so wrapping it no longer
+  observes teardown and the shadow registry kept reporting tools that had
+  already been aborted. Subscribing to `toolchange` fixes the stale counts and
+  replaces most of the 2-second polling loop.
+- **Removed scoring for annotation attributes that do not exist.** WebMCP Core
+  awarded 5 points for `toolannotation`, `toolreadonly`, `tooldestructive`,
+  `toolidempotent` and `toolopenworldhint`. None of these appear in any draft —
+  the declarative API defines exactly four attributes. The points were
+  unreachable, so every site was silently capped at 95. Annotations are now
+  scored where they actually live: `annotations: { readOnlyHint }` on imperative
+  tool definitions.
+- **New signal: agent submit handling** (3 pts, Declarative Forms). Detects
+  `SubmitEvent.agentInvoked` / `respondWith()`, the `toolactivated` /
+  `toolcanceled` lifecycle events, and `:tool-form-active` /
+  `:tool-submit-active` styling.
+- **Corrected the imperative code example.** It was wrong three ways: it used
+  `navigator.modelContext` (deprecated), called `addTool()` (never existed in
+  any version — it is `registerTool`), and used a `handler` property (the spec
+  calls it `execute`). Now shows feature detection, `execute`, `annotations`,
+  and `AbortSignal` teardown.
+- **HTTPS reframed as a hard prerequisite.** WebMCP is gated on a secure
+  context, so an HTTP page cannot register tools at all. Now checks
+  `window.isSecureContext` and says so plainly instead of treating it as 3 soft
+  points.
+- `.well-known/webmcp` is still scored but now labelled honestly as a community
+  discovery convention rather than being linked to a spec section that does not
+  describe it.
+
+### Scoring
+
+- **Fixed a category overflow.** WebMCP Core summed to 35 points against a
+  declared max of 30, so a fully-featured page could total 105/100. Rebalanced
+  to 12 / 8 / 5 / 5 = 30. Declarative Forms rebalanced to 7 / 6 / 4 / 3 / 2 / 3
+  = 25 to make room for the new signal. Verified: max reachable total is exactly
+  100, no category can overflow.
+- Partial credit (3/5) is now awarded for the deprecated `navigator` surface
+  rather than full marks, with the migration named in the signal text.
+- Badge text is rounded — the fractional coverage-ratio points could render a
+  4-character badge like `63.4`.
+
+### Manifest V3 compliance
+
+- **Dropped three permissions.** `webNavigation` and `storage` were declared but
+  never used anywhere in the codebase. `activeTab` does not grant anything when
+  the trigger is a side-panel button rather than a direct user gesture on the
+  action icon — the `scripting` permission plus `host_permissions` is what was
+  actually authorising injection all along. Unused permissions are a common
+  Chrome Web Store rejection reason.
+- **Overlay no longer blocks the main thread.** `toggleOverlay()` styled every
+  form in one synchronous pass, calling `getComputedStyle` per form. Now batched
+  20 at a time behind `requestAnimationFrame` with `scheduler.yield()` between
+  batches.
+- Converted the remaining callback-style `chrome.runtime.sendMessage` calls in
+  `content.js` to `async`/`await`.
+- Discovery fetches now have an 8s timeout and a 512 KB cap. They hit arbitrary
+  third-party origins, so an unresponsive host previously hung the scan and a
+  large `robots.txt` was read into the service worker in full.
+- Added `CHROMEWEBSTORE.md` with per-permission justifications, privacy
+  disclosure, and a pre-submission checklist.
+
+### Other fixes
+
+- **Warnings no longer render as failures.** `content.js` emits `'warning'` but
+  the side panel only recognised `'warn'` / `'partial'`, so every warning showed
+  a red ✗. The markdown export handled it correctly, so the two outputs
+  disagreed.
+- **Re-scans no longer stack listeners.** Each scan added another
+  `webmcp-checker-main-results` listener, so after N re-scans one tool
+  registration triggered N full re-scans.
+- Report footer reads the version from the manifest instead of the hardcoded
+  `v0.1.4` it had carried for three releases.
+
 ## 0.1.7
 
 - Fix: pages that register tools via `navigator.modelContext.registerTool` (e.g. the Chrome WebMCP React Flight Search demo) scored 0 on WebMCP Core and reported zero tools. Multiple overlapping root causes, all now fixed:

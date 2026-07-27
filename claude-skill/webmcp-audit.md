@@ -4,7 +4,19 @@ description: "Audit a URL for WebMCP and AI agent-readiness. Usage: /webmcp-audi
 
 # WebMCP Agent-Readiness Audit
 
-You are a WebMCP readiness auditor. Your job is to analyze a website's readiness for AI agent interaction using the WebMCP standard (W3C Draft, February 2026).
+You are a WebMCP readiness auditor. Your job is to analyze a website's readiness for AI agent interaction using the WebMCP standard (W3C Draft Community Group Report — not standards-track; rubric checked against the draft as of July 2026).
+
+## Spec facts you must apply
+
+The draft has moved several times. Score against the current shape, and treat use of the older shapes as a migration finding rather than a pass:
+
+- The imperative API lives on **`document.modelContext`**. `navigator.modelContext` was **deprecated in Chromium 150** but still ships during the Chrome 149–156 origin trial. Correct feature detection is `document.modelContext ?? navigator.modelContext`.
+- `unregisterTool()`, `provideContext()` and `clearContext()` were **removed** from the draft in 2026. Teardown is done by passing an `AbortSignal` at registration and aborting it.
+- Tool definitions use `execute` (not `handler`), plus `name`, `description`, `inputSchema` (JSON Schema) and optional `annotations` such as `{ readOnlyHint: true }`.
+- `getTools()` enumerates registered tools; the `toolchange` event fires when the set changes.
+- The declarative API defines **exactly four** attributes: `toolname`, `tooldescription`, `toolautosubmit`, `toolparamdescription`. There are **no** declarative annotation attributes — do not look for `toolreadonly`, `tooldestructive`, `toolidempotent` or `toolopenworldhint`; they have never existed in any draft.
+- Agent-invoked submissions expose `SubmitEvent.agentInvoked` and `respondWith(promise)`; `toolactivated` / `toolcanceled` fire on `window`; `:tool-form-active` and `:tool-submit-active` style the active form and submit button.
+- **WebMCP requires a secure context.** On an HTTP page no tool can be registered at all, whatever else the page does — report this as a blocker, not a deduction.
 
 ## Input parsing
 
@@ -26,8 +38,9 @@ For each URL, use WebFetch to retrieve:
    - `<label>` elements and their `for` attributes
    - Forms and inputs with `id` attributes
    - ARIA landmarks and roles
-   - Whether the page uses HTTPS
-   - Any references to `navigator.modelContext` in inline scripts
+   - Whether the page uses HTTPS (a hard prerequisite — see above)
+   - References to `document.modelContext` (current) or `navigator.modelContext` (deprecated) in inline scripts
+   - References to `agentInvoked` / `respondWith`, `toolactivated` / `toolcanceled`, and `:tool-form-active` / `:tool-submit-active`
 
 2. **`{origin}/robots.txt`** — extract:
    - User-agent rules for: `GPTBot`, `Google-Extended`, `ClaudeBot`, `anthropic-ai`, `ChatGPT-User`, `CCBot`
@@ -48,9 +61,10 @@ Apply the following scoring rubric. Each category has a weight and individual si
 
 | Signal | How to detect | Points (out of 30) |
 |--------|--------------|---------------------|
-| Declarative or imperative tools detected | Any `form[toolname]` OR references to `navigator.modelContext.registerTool` in scripts | 15 |
-| Tool schemas have descriptions | `tooldescription` on forms OR description fields in imperative registrations | 10 |
-| Tool annotations present (`readOnlyHint` etc.) | Check for annotation attributes or properties | 5 |
+| Tools exposed at all | Any `form[toolname]` OR a `registerTool` call in scripts | 12 |
+| Tool descriptions present | `tooldescription` on forms OR `description` in imperative registrations | 8 |
+| Tool annotations present | `annotations: { readOnlyHint: … }` on imperative tool definitions. **Imperative only** — there is no declarative equivalent | 5 |
+| Modern API surface | `document.modelContext` → 5. Only `navigator.modelContext` / bare `registerTool` → 3 and flag the migration. Neither → 0 | 5 |
 
 **Note:** Full imperative API detection requires browser JS execution (Chrome Extension). Flag this: "Imperative API tools can only be fully detected with the Chrome Extension. This audit covers declarative forms and static code references."
 
@@ -58,11 +72,12 @@ Apply the following scoring rubric. Each category has a weight and individual si
 
 | Signal | How to detect | Points (out of 25) |
 |--------|--------------|---------------------|
-| Forms with `toolname` attribute | Count `form[toolname]` | 8 |
-| Forms with `tooldescription` attribute | Count `form[tooldescription]` | 7 |
-| Inputs with `toolparamdescription` | Count `[toolparamdescription]` | 5 |
+| Forms with `toolname` attribute | Count `form[toolname]` | 7 |
+| Forms with `tooldescription` attribute | Count `form[tooldescription]` | 6 |
+| Inputs with `toolparamdescription` | Count `[toolparamdescription]` | 4 |
 | `toolautosubmit` configured | Check for `toolautosubmit` on non-sensitive forms | 3 |
 | Coverage: annotated forms vs total forms | Ratio of `form[toolname]` to total `form` elements | 2 |
+| Agent submit handling | `agentInvoked` / `respondWith()` in scripts, `toolactivated` / `toolcanceled` listeners, or `:tool-form-active` / `:tool-submit-active` styling | 3 |
 
 ### Category 3: Structured Data (weight: 20%)
 
@@ -78,7 +93,7 @@ Apply the following scoring rubric. Each category has a weight and individual si
 
 | Signal | How to detect | Points (out of 15) |
 |--------|--------------|---------------------|
-| `/.well-known/webmcp` manifest exists | Successful fetch with valid JSON | 5 |
+| `/.well-known/webmcp` manifest exists | Successful fetch with valid JSON. Note in the report that this is a community discovery convention, **not** part of the WebMCP draft | 5 |
 | `/llms.txt` exists | Successful fetch with markdown content | 4 |
 | `robots.txt` allows AI crawlers | No blocks for GPTBot, Google-Extended, ClaudeBot | 4 |
 | Sitemap referenced in robots.txt | `Sitemap:` directive present | 2 |
@@ -87,7 +102,7 @@ Apply the following scoring rubric. Each category has a weight and individual si
 
 | Signal | How to detect | Points (out of 10) |
 |--------|--------------|---------------------|
-| HTTPS | URL uses `https://` | 3 |
+| Secure context | URL uses `https://`. If not, state plainly that WebMCP cannot run on this page at all | 3 |
 | Semantic HTML (heading hierarchy, labeled forms) | Proper `h1`-`h6` hierarchy, `<label for="">` associations | 3 |
 | Server-side rendered content | Content present in initial HTML (not empty body requiring JS) | 2 |
 | Stable form IDs | `<form>` and key `<input>` elements have `id` attributes | 2 |
@@ -109,7 +124,8 @@ Apply the following scoring rubric. Each category has a weight and individual si
 **Scanned:** {today's date}
 **Overall Score:** {score}/100 ({emoji} {label})
 
-> Based on WebMCP spec as of March 2026 (W3C Draft Community Group Report).
+> Based on the WebMCP spec as of July 2026 (W3C Draft Community Group Report, not standards-track).
+> `navigator.modelContext` is deprecated as of Chromium 150 in favour of `document.modelContext`.
 > Imperative API tools can only be fully detected with the Chrome Extension.
 
 ## Score Breakdown
@@ -234,4 +250,7 @@ After saving, tell the user: "Rapport opgeslagen als `{filename}` in de huidige 
 - Include actual code snippets in recommendations showing exactly what to add (e.g., the `toolname` and `tooldescription` attributes for a specific form).
 - Keep recommendations actionable — a dev team should be able to implement them without further research.
 - Always include the disclaimer about the spec being a draft and the date.
+- When a site uses `navigator.modelContext`, do not simply mark it wrong — award partial credit and give the concrete migration line: `const modelContext = document.modelContext ?? navigator.modelContext;`
+- Never recommend `unregisterTool()`, `provideContext()` or `clearContext()`; they have been removed from the draft. Recommend `AbortSignal` teardown instead.
+- In code examples use `execute`, not `handler`, and `registerTool`, not `addTool`.
 - Always write the report file — do not skip this step.
