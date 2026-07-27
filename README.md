@@ -134,6 +134,10 @@ The tests are regression guards for bugs that actually shipped, so they are wort
 
 CI runs all three on every PR and attaches a built `.zip`. Since Chrome 150 removed the `--load-extension` flag, downloading that artifact and loading it via `chrome://extensions` → Developer mode → Load unpacked is the quickest way to try a branch.
 
+Releases follow [semver](https://semver.org/), interpreted against what a user of the audit sees — the policy is at the top of [CHANGELOG.md](CHANGELOG.md). Bump with `npm run bump -- patch|minor|major`, which keeps the manifest, `package.json`, the changelog and the store listing in sync.
+
+[CLAUDE.md](CLAUDE.md) documents the architectural constraints that are easy to get wrong here — the MAIN/ISOLATED world boundary, the ephemeral service worker, escaping in the privileged side panel, and the scoring invariants.
+
 ## Privacy
 
 Nothing is collected, stored, or transmitted. Page analysis happens entirely in your browser, and the only network requests go to the audited site's own domain for `robots.txt`, `llms.txt` and `.well-known/webmcp`. See [PRIVACY.md](PRIVACY.md) for the full policy.

@@ -149,23 +149,54 @@ test('async onMessage handlers keep the channel open', () => {
   }
 });
 
-test('the manifest version matches the documented version', () => {
-  const changelog = fs.readFileSync(path.join(EXT, 'CHANGELOG.md'), 'utf8');
-  const latest = changelog.match(/^##\s*([0-9]+\.[0-9]+\.[0-9]+)/m);
-  assert.ok(latest, 'no version heading found in CHANGELOG.md');
+test('the manifest version is valid semver', () => {
+  // Chrome accepts up to four dot-separated integers, but this project commits
+  // to semver so the changelog and the store listing agree on what a bump means.
+  assert.match(
+    manifest.version, /^\d+\.\d+\.\d+$/,
+    `manifest version "${manifest.version}" is not MAJOR.MINOR.PATCH`
+  );
+});
+
+test('the version is identical in the manifest, package.json and changelog', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert.strictEqual(
-    manifest.version, latest[1],
-    `manifest is ${manifest.version} but the newest CHANGELOG entry is ${latest[1]}`
+    pkg.version, manifest.version,
+    `package.json is ${pkg.version} but the manifest is ${manifest.version} — run npm run bump`
   );
 
-  const store = path.join(ROOT, 'CHROMEWEBSTORE.md');
-  if (fs.existsSync(store)) {
-    const text = fs.readFileSync(store, 'utf8');
-    assert.ok(
-      text.includes(manifest.version),
-      `CHROMEWEBSTORE.md does not mention the current version ${manifest.version}`
-    );
+  const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
+  // Skip [Unreleased]; the newest dated release must match.
+  const released = changelog.match(/^##\s*\[(\d+\.\d+\.\d+)\]/m);
+  assert.ok(released, 'no released version heading found in CHANGELOG.md');
+  assert.strictEqual(
+    manifest.version, released[1],
+    `manifest is ${manifest.version} but the newest CHANGELOG release is ${released[1]}`
+  );
+});
+
+test('the changelog keeps an Unreleased section and follows Keep a Changelog', () => {
+  const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
+  assert.ok(
+    changelog.includes('## [Unreleased]'),
+    'CHANGELOG.md needs an [Unreleased] section — npm run bump promotes it'
+  );
+  const groups = changelog.match(/^### (\w[\w ]*)$/gm) || [];
+  const ALLOWED = new Set(['Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security']);
+  for (const g of groups) {
+    const name = g.replace('### ', '').trim();
+    assert.ok(ALLOWED.has(name), `"${name}" is not a Keep a Changelog group`);
   }
+});
+
+test('the store listing names the current version', () => {
+  const store = path.join(ROOT, 'CHROMEWEBSTORE.md');
+  if (!fs.existsSync(store)) return;
+  const text = fs.readFileSync(store, 'utf8');
+  assert.ok(
+    text.includes(manifest.version),
+    `CHROMEWEBSTORE.md does not mention the current version ${manifest.version}`
+  );
 });
 
 test('a privacy policy exists, since <all_urls> requires one', () => {

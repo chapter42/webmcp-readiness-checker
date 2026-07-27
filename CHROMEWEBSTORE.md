@@ -143,13 +143,13 @@ answers in the data-use table above. If either changes, change both.
 - [x] Privacy policy written ([`PRIVACY.md`](PRIVACY.md)) and consistent with the data-use answers above
 - [ ] Privacy policy URL verified live on `main` after merge
 - [ ] At least one screenshot at 1280×800 or 640×400
-- [ ] ZIP excludes `.git/`, `CHROMEWEBSTORE.md`, `README.md`, `CHANGELOG.md`, `claude-skill/`
+- [x] ZIP contains only `extension/` — `npm run package` fails the build if repo docs leak in
 - [ ] Tested as an unpacked extension on a fresh Chrome profile
 
 **Packaging command:**
 
 ```bash
-cd extension && zip -r ../webmcp-readiness-checker-0.2.0.zip . -x '.*' -x '__MACOSX/*'
+npm run package
 ```
 
 ---
