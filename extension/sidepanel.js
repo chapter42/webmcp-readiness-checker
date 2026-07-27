@@ -29,9 +29,6 @@ const $btnRescan = document.getElementById('btn-rescan');
 /** @type {object|null} Most recent full scan result payload */
 let scanData = null;
 
-/** @type {number|null} The tab ID we are displaying results for */
-let activeTabId = null;
-
 /** @type {boolean} Whether the page overlay is currently toggled on */
 let overlayActive = false;
 
@@ -88,7 +85,7 @@ const FIX_SNIPPETS = {
 - [Cart](https://example.com/cart): Manage shopping cart`,
   },
   webmcp_manifest: {
-    desc: 'Create a /.well-known/webmcp manifest describing available tools.',
+    desc: 'Create a /.well-known/webmcp or /.well-known/webmcp.json manifest describing available tools.',
     code: `{
   "schema_version": "0.1",
   "name_for_model": "example_site",
@@ -183,7 +180,7 @@ if (modelContext && "registerTool" in modelContext) {
   window.addEventListener("toolcanceled", ({ toolName }) => {
     console.log(\`Agent cancelled: \${toolName}\`);
   });
-<\/script>`,
+</script>`,
   },
   semantic_html: {
     desc: 'Use semantic HTML elements so agents can understand page structure.',
@@ -531,20 +528,17 @@ function renderAll() {
 // ---------------------------------------------------------------------------
 
 /**
- * Get the currently active tab ID. Always queries fresh — do not cache,
- * since the user may switch tabs between the initial scan and Re-scan,
- * and the side panel should act on whatever tab is active *now*.
+ * Get the currently active tab ID. Always queries fresh — never cached, since
+ * the user may switch tabs between the initial scan and Re-scan, and the side
+ * panel should act on whatever tab is active *now*.
  * @returns {Promise<number|null>}
  */
 async function getActiveTabId() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab) {
-      activeTabId = tab.id;
-      return tab.id;
-    }
-  } catch {
-    // Fallback
+    if (tab) return tab.id;
+  } catch (err) {
+    console.warn('[webMCP] Could not resolve the active tab:', err);
   }
   return null;
 }

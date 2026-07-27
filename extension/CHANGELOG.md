@@ -90,6 +90,19 @@ exist — or never did.
 - Added `CHROMEWEBSTORE.md` with per-permission justifications, privacy
   disclosure, and a pre-submission checklist.
 
+### Tooling
+
+- Added CI (`.github/workflows/ci.yml`): syntax check, a 27-case test suite,
+  ESLint, and a packaged `.zip` artifact on every PR. The tests are
+  dependency-free and run on Node's built-in runner.
+- The suite encodes the bugs fixed in this release so they cannot come back:
+  attribute-breakout payloads against `escapeHtml`, per-category score ceilings,
+  and permissions declared but never used. Each guard was mutation-tested —
+  reintroducing the original bug makes it fail.
+- Downloading the CI artifact is now the quickest way to try a branch, since
+  Chrome 150 removed `--load-extension` and unpacked builds can only be loaded
+  by hand.
+
 ### Other fixes
 
 - **Warnings no longer render as failures.** `content.js` emits `'warning'` but
@@ -101,6 +114,13 @@ exist — or never did.
   registration triggered N full re-scans.
 - Report footer reads the version from the manifest instead of the hardcoded
   `v0.1.4` it had carried for three releases.
+- `robots.txt` AI-crawler detection now covers `claudebot` (Anthropic's current
+  crawler — only the retired `claude-web` and `anthropic-ai` names were
+  checked), plus `oai-searchbot`, `perplexitybot` and `ccbot`. A site blocking
+  ClaudeBot previously still passed the check.
+- Removed two dead assignments surfaced by the new lint step: an unused
+  `activeTabId` in the side panel, and a redundant `toLowerCase()` in the
+  robots.txt parser whose result was never read.
 
 ## 0.1.7
 

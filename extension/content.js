@@ -7,9 +7,6 @@
  * background service worker via chrome.runtime.sendMessage.
  */
 
-/* eslint-env browser */
-/* global chrome */
-
 // Prevent double injection when executeScript re-injects on an already-loaded tab
 if (window._webmcpCheckerLoaded) {
   // Already injected — do nothing
@@ -446,19 +443,22 @@ function buildDiscoveryPlaceholder() {
 
 /**
  * Fill discovery category with data returned from the background script.
- * @param {{ robots: object, llms: object, webmcp: object }} discovery
+ * @param {{ robots: object, llms: object, webmcp: object, webmcpJson: object }} discovery
  * @returns {{ score: number, max: number, signals: Array }}
  */
 function fillDiscovery(discovery) {
   const signals = [];
   let score = 0;
 
-  // webmcp manifest (5 pts)
-  if (discovery.webmcp?.status === 200 && discovery.webmcp.content) {
+  // webmcp manifest (5 pts) — check .well-known/webmcp or .well-known/webmcp.json
+  const hasWebmcp = discovery.webmcp?.status === 200 && discovery.webmcp.content;
+  const hasWebmcpJson = discovery.webmcpJson?.status === 200 && discovery.webmcpJson.content;
+  if (hasWebmcp || hasWebmcpJson) {
+    const found = [hasWebmcp && '.well-known/webmcp', hasWebmcpJson && '.well-known/webmcp.json'].filter(Boolean).join(' and ');
     score += 5;
-    signals.push(signal('webmcp manifest', 'pass', '.well-known/webmcp found', 5));
+    signals.push(signal('webmcp manifest', 'pass', `${found} found`, 5));
   } else {
-    signals.push(signal('webmcp manifest', 'fail', 'No .well-known/webmcp', 0));
+    signals.push(signal('webmcp manifest', 'fail', 'No .well-known/webmcp or .well-known/webmcp.json', 0));
   }
 
   // llms.txt (4 pts)
@@ -471,9 +471,14 @@ function fillDiscovery(discovery) {
 
   // robots.txt AI crawlers allowed (4 pts)
   if (discovery.robots?.status === 200 && discovery.robots.content) {
-    const content = discovery.robots.content.toLowerCase();
-    // Check that common AI bots are NOT disallowed
-    const aiBots = ['gptbot', 'chatgpt-user', 'anthropic-ai', 'claude-web', 'google-extended'];
+    // Check that common AI bots are NOT disallowed. `claudebot` is Anthropic's
+    // current crawler; `claude-web` and `anthropic-ai` are the older names and
+    // are kept so sites that still block those are flagged.
+    const aiBots = [
+      'gptbot', 'chatgpt-user', 'oai-searchbot',
+      'claudebot', 'claude-web', 'anthropic-ai',
+      'google-extended', 'perplexitybot', 'ccbot',
+    ];
     const disallowed = aiBots.filter((bot) => {
       const pattern = new RegExp(`user-agent:\\s*${bot}[\\s\\S]*?disallow:\\s*/`, 'i');
       return pattern.test(discovery.robots.content);
@@ -776,7 +781,7 @@ function generateRecommendations(categories, forms, tools) {
   }
   const noManifest = disc.find((s) => s.name === 'webmcp manifest' && s.status === 'fail');
   if (noManifest) {
-    recs.push('Create a /.well-known/webmcp manifest listing your agent-accessible tools.');
+    recs.push('Create a /.well-known/webmcp or /.well-known/webmcp.json manifest listing your agent-accessible tools.');
   }
 
   // Missing tooldescription on tools

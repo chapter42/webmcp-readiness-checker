@@ -21,7 +21,7 @@ The draft is moving, and the rubric tracks it:
 | **WebMCP Core** | 30% | `document.modelContext` (full credit) vs deprecated `navigator.modelContext` (partial), registered imperative tools via `getTools()` / `registerTool` interception, tool descriptions, `annotations.readOnlyHint` |
 | **Declarative Forms** | 25% | `toolname`, `tooldescription`, `toolparamdescription`, `toolautosubmit` attributes, form coverage ratio, and agent submit handling (`agentInvoked` / `respondWith`, `toolactivated` / `toolcanceled`, `:tool-form-active`) |
 | **Structured Data** | 20% | JSON-LD blocks, `potentialAction` (SearchAction, BuyAction), Product/Offer schema, Organization/WebSite schema |
-| **Discovery & Crawling** | 15% | `/.well-known/webmcp` manifest, `/llms.txt`, `robots.txt` AI crawler rules, sitemaps |
+| **Discovery & Crawling** | 15% | `/.well-known/webmcp` or `/.well-known/webmcp.json` manifest, `/llms.txt`, `robots.txt` AI crawler rules, sitemaps |
 | **Technical Foundation** | 10% | Secure context (WebMCP requires HTTPS — without it no tool can register at all), semantic HTML, server-side rendering, stable form IDs |
 | **Security & Consent** | Flags | Sensitive forms with autosubmit, missing consent patterns |
 
@@ -113,6 +113,26 @@ No `activeTab` — it grants nothing when the trigger is a side-panel button rat
 - **Cross-origin stylesheets** cannot be read, so `:tool-form-active` styling defined in a third-party stylesheet will not be detected.
 - **Point-in-time analysis** — no historical tracking or monitoring (yet).
 - **Single page** — scans the current page only, not the entire site.
+
+## Development
+
+No build step — the extension is vanilla JS loaded straight from `extension/`. Tooling is only for checks.
+
+```bash
+npm run verify
+```
+
+That runs a syntax check over every shipped script plus the test suite (Node's built-in runner, no dependencies). `npm run lint` adds ESLint, which is the only thing needing `npm install`. `npm run package` builds the Chrome Web Store zip into `dist/`.
+
+The tests are regression guards for bugs that actually shipped, so they are worth keeping green:
+
+| Test file | Guards against |
+|-----------|----------------|
+| `test/escaping.test.js` | Page-supplied text breaking out of an HTML attribute in the side panel |
+| `test/scoring.test.js` | A category scoring above its declared max; totals drifting off 100 |
+| `test/manifest.test.js` | Unused permissions, missing icons, CSP violations, version drift |
+
+CI runs all three on every PR and attaches a built `.zip`. Since Chrome 150 removed the `--load-extension` flag, downloading that artifact and loading it via `chrome://extensions` → Developer mode → Load unpacked is the quickest way to try a branch.
 
 ## Privacy
 

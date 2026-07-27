@@ -1,6 +1,10 @@
 .DS_Store
 *.zip
 
+# Build output and tooling
+node_modules/
+dist/
+
 # Audit outputs and working files
 webmcp-audit-*.md
 compass_artifact_*.md
