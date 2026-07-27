@@ -33,7 +33,9 @@ const listing = execFileSync('unzip', ['-Z1', out], { encoding: 'utf8' })
   .split('\n')
   .filter(Boolean);
 
-const forbidden = listing.filter((f) => /CHROMEWEBSTORE|PRIVACY\.md|^test\/|^\.git/.test(f));
+const forbidden = listing.filter(
+  (f) => /CHROMEWEBSTORE|PRIVACY\.md|CLAUDE\.md|CHANGELOG\.md|^test\/|^\.git/.test(f)
+);
 if (forbidden.length) {
   console.error('Refusing to ship — these must not be in the package:');
   for (const f of forbidden) console.error(`  ${f}`);

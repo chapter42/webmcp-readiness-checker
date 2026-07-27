@@ -16,6 +16,7 @@
     "test": "node --test test/*.test.js",
     "syntax": "node scripts/check-syntax.mjs",
     "lint": "eslint .",
+    "bump": "node scripts/bump-version.mjs",
     "package": "node scripts/package.mjs",
     "verify": "npm run syntax && npm test"
   },
