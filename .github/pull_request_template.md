@@ -16,7 +16,7 @@ If `manifest.json` changed:
 
 - [ ] Every permission added is actually called somewhere (CI enforces this)
 - [ ] `CHROMEWEBSTORE.md` has a plain-English justification for each new permission
-- [ ] Version bumped, with a matching `extension/CHANGELOG.md` entry
+- [ ] Version bumped with `npm run bump -- patch|minor|major`, notes written under `## [Unreleased]`
 
 If scoring changed:
 
