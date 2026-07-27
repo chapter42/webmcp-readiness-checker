@@ -5,8 +5,9 @@
  * Responsibilities:
  *  - Open the side panel when the extension icon is clicked.
  *  - Update the badge based on scan results from the content script.
- *  - Fetch discovery files (robots.txt, llms.txt, .well-known/webmcp, .well-known/webmcp.json).
- *  - Inject a MAIN-world script to detect navigator.modelContext.
+ *  - Fetch discovery files (robots.txt, llms.txt, .well-known/webmcp,
+ *    .well-known/webmcp.json).
+ *  - Inject a MAIN-world script to detect document/navigator.modelContext.
  *  - Route messages between the content script and the side panel.
  *  - Auto-scan on navigation and SPA history changes.
  */
@@ -45,9 +46,12 @@ function getBadgeColors(score) {
  */
 async function updateBadge(tabId, score) {
   const { bg, text } = getBadgeColors(score);
+  // The coverage-ratio signal awards fractional points, so the total can be
+  // e.g. 63.4 — a badge only fits ~4 characters, so round before display.
+  const badgeText = String(Math.round(score));
   try {
     await Promise.all([
-      chrome.action.setBadgeText({ text: String(score), tabId }),
+      chrome.action.setBadgeText({ text: badgeText, tabId }),
       chrome.action.setBadgeBackgroundColor({ color: bg, tabId }),
       chrome.action.setBadgeTextColor({ color: text, tabId }),
     ]);
@@ -60,18 +64,35 @@ async function updateBadge(tabId, score) {
 // Discovery file fetching
 // ---------------------------------------------------------------------------
 
+/** Abort a discovery fetch that takes longer than this. */
+const FETCH_TIMEOUT_MS = 8000;
+
+/** Truncate discovery file bodies beyond this many characters. */
+const MAX_DISCOVERY_BYTES = 512 * 1024;
+
 /**
  * Fetch a single URL and return its status, body text, and any error.
+ *
+ * Discovery files are fetched from arbitrary third-party origins, so both a
+ * timeout and a size cap are required — an unresponsive host would otherwise
+ * hang the scan, and a multi-megabyte robots.txt would be read fully into the
+ * service worker's memory.
+ *
  * @param {string} url
- * @returns {Promise<{ url: string, status: number|null, content: string|null, error: string|null }>}
+ * @returns {Promise<{ url: string, status: number|null, content: string|null, truncated: boolean, error: string|null }>}
  */
 async function fetchFile(url) {
   try {
-    const res = await fetch(url, { redirect: 'follow' });
-    const content = await res.text();
-    return { url, status: res.status, content, error: null };
+    const res = await fetch(url, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    const raw = await res.text();
+    const truncated = raw.length > MAX_DISCOVERY_BYTES;
+    const content = truncated ? raw.slice(0, MAX_DISCOVERY_BYTES) : raw;
+    return { url, status: res.status, content, truncated, error: null };
   } catch (err) {
-    return { url, status: null, content: null, error: err.message };
+    return { url, status: null, content: null, truncated: false, error: err.message };
   }
 }
 
@@ -96,7 +117,8 @@ async function fetchDiscoveryFiles(origin) {
 
 /**
  * Inject inject.js into the MAIN world of the given tab so it can access
- * navigator.modelContext on the page's own JS context.
+ * the page's model context object (document.modelContext, or the deprecated
+ * navigator.modelContext) in the page's own JS context.
  * @param {number} tabId
  */
 async function injectMainWorldScript(tabId) {
