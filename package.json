@@ -13,7 +13,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test \"test/**/*.test.js\"",
+    "test": "node --test test/*.test.js",
     "syntax": "node scripts/check-syntax.mjs",
     "lint": "eslint .",
     "package": "node scripts/package.mjs",
